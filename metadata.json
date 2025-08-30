@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Career Guidance Chatbot",
+  "description": "A supportive, AI-powered chatbot to help students explore career domains based on their preferences and capabilities.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
