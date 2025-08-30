@@ -146,9 +146,10 @@ export default function App() {
           const lowerCaseText = text.toLowerCase();
           if (lowerCaseText.includes('satisfied') && !lowerCaseText.includes('not')) {
             setChatState(ChatState.GENERATING_DETAILS);
-            const details = await geminiService.getDomainDetailsAndRoadmap(quizSession!.predictedDomain!);
+            const domain = quizSession!.predictedDomain!;
+            const details = await geminiService.getDomainDetailsAndRoadmap(domain);
             addMessage(ChatSender.BOT, details);
-            startFollowUpConversation();
+            promptForFinalFeedback(domain);
           } else {
             const botReply = 'No problem! Which domains interest you most? You can name 1–2 (e.g., Data Science, Design, Accounting).';
             addMessage(ChatSender.BOT, botReply);
@@ -175,10 +176,22 @@ export default function App() {
             setChatState(ChatState.GENERATING_DETAILS);
             const details = await geminiService.getDomainDetailsAndRoadmap(chosenDomain);
             addMessage(ChatSender.BOT, details);
-            startFollowUpConversation();
+            promptForFinalFeedback(chosenDomain);
             break;
         }
         
+        case ChatState.AWAITING_FINAL_FEEDBACK: {
+            const isPositive = await geminiService.isPositiveFeedback(text);
+            if (isPositive) {
+              startFollowUpConversation();
+            } else {
+              const botReply = 'No problem at all! Exploring is what this is all about. Which other domains interest you most? You can name 1–2 (e.g., Data Science, Design, Accounting).';
+              addMessage(ChatSender.BOT, botReply);
+              setChatState(ChatState.AWAITING_INTERESTED_DOMAIN);
+            }
+            break;
+        }
+
         case ChatState.POST_GUIDANCE_CHAT: {
             if (geminiChat) {
                 const response = await geminiChat.sendMessage({ message: text });
@@ -204,8 +217,14 @@ export default function App() {
       addMessage(ChatSender.BOT, questionText, q.options);
   };
 
+  const promptForFinalFeedback = (domain: string) => {
+    const botReply = `So, what do you think? Does this sound like a good path for you, or would you prefer to explore a different domain?`;
+    addMessage(ChatSender.BOT, botReply);
+    setChatState(ChatState.AWAITING_FINAL_FEEDBACK);
+  };
+
   const startFollowUpConversation = () => {
-    const botReply = "I hope this was helpful! Feel free to ask me any more questions you have.";
+    const botReply = "I'm glad this was helpful! Feel free to ask me any more questions you have.";
     addMessage(ChatSender.BOT, botReply);
     const chat = geminiService.startFollowUpChat();
     setGeminiChat(chat);
@@ -261,9 +280,10 @@ export default function App() {
 
         if (analysisResult.isGoodFit) {
           setChatState(ChatState.GENERATING_DETAILS);
-          const details = await geminiService.getDomainDetailsAndRoadmap(newQuizSession.interestedDomain!);
+          const domain = newQuizSession.interestedDomain!;
+          const details = await geminiService.getDomainDetailsAndRoadmap(domain);
           addMessage(ChatSender.BOT, details);
-          startFollowUpConversation();
+          promptForFinalFeedback(domain);
         } else {
           // The 'nextSteps' text is already in the analysis data, so we just wait for user input
           setChatState(ChatState.AWAITING_ADJACENT_CHOICE);

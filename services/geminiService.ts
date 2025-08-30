@@ -296,6 +296,38 @@ export const getDomainDetailsAndRoadmap = async (domain: string): Promise<string
     return response.text;
 };
 
+const feedbackSystemInstruction = `You are an AI that determines if a user's feedback is positive or negative in the context of career guidance.
+- The user has just been shown a detailed career path.
+- "Positive" means they are satisfied and want to continue with follow-up questions.
+- "Negative" means they are unsatisfied and want to explore a different career path.
+- Your response MUST be a single word: "POSITIVE" or "NEGATIVE". Do not add any other text.
+
+Examples:
+- Input: "Yes, this looks great!" -> Output: "POSITIVE"
+- Input: "Hmm, I'm not sure this is for me." -> Output: "NEGATIVE"
+- Input: "Let's explore something else." -> Output: "NEGATIVE"
+- Input: "Thank you, this is helpful" -> Output: "POSITIVE"
+- Input: "I want to see another domain" -> Output: "NEGATIVE"
+- Input: "no" -> Output: "NEGATIVE"
+`;
+
+export const isPositiveFeedback = async (text: string): Promise<boolean> => {
+    const response = await ai.models.generateContent({
+        model,
+        contents: `Is the following user feedback positive or negative?\n\nFeedback: "${text}"`,
+        config: {
+            systemInstruction: feedbackSystemInstruction,
+            // Simple classification, low latency is key.
+            thinkingConfig: { thinkingBudget: 0 }, 
+            // Ensure a single-word response.
+            maxOutputTokens: 5,
+        },
+    });
+
+    const result = response.text.trim().toUpperCase();
+    return result === 'POSITIVE';
+};
+
 const followUpChatSystemInstruction = `You are a supportive, motivating Career Guidance Teacher Chatbot.
 You have already provided the student with a detailed analysis and roadmap for a career domain.
 Your current role is to answer any follow-up questions they may have.
