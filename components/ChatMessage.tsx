@@ -3,6 +3,7 @@ import { ChatMessageData, ChatSender } from '../types';
 import { BotIcon, UserIcon } from './Icons';
 import { QuizOptions } from './QuizOptions';
 import { QuizAnalysis } from './QuizAnalysis';
+import { Roadmap } from './Roadmap';
 
 interface ChatMessageProps {
   message: ChatMessageData;
@@ -85,6 +86,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOptionClick
       <div className={`max-w-xl p-4 text-sm ${bubbleClasses}`}>
         {message.analysis ? (
           <QuizAnalysis analysis={message.analysis} />
+        ) : message.roadmap ? (
+          <Roadmap steps={message.roadmap} />
         ) : (
           <SimpleMarkdown text={message.text} />
         )}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Chat } from '@google/genai';
-import { ChatMessageData, ChatSender, ChatState, QuizQuestion, QuizSession } from './types';
+import { ChatMessageData, ChatSender, ChatState, QuizQuestion, QuizSession, RoadmapStep } from './types';
 import { ChatMessage } from './components/ChatMessage';
 import { ChatInput } from './components/ChatInput';
 import { LoadingSpinner } from './components/LoadingSpinner';
@@ -47,12 +47,14 @@ export default function App() {
       }
   }, [isTtsEnabled]);
 
-  const addMessage = useCallback((sender: ChatSender, text: string, options?: string[], analysis?: ChatMessageData['analysis']) => {
-    setMessages(prev => [...prev, { sender, text, options, analysis }]);
+  const addMessage = useCallback((sender: ChatSender, text: string, options?: string[], analysis?: ChatMessageData['analysis'], roadmap?: RoadmapStep[]) => {
+    setMessages(prev => [...prev, { sender, text, options, analysis, roadmap }]);
     if (sender === ChatSender.BOT) {
         if (analysis) {
              const analysisText = `${analysis.headline}. ${analysis.overallFeedback}. ${analysis.nextSteps}`;
              speakBotMessage(analysisText);
+        } else if (roadmap) {
+            speakBotMessage("Here is a personalized 12-month roadmap to get you started.");
         } else {
             speakBotMessage(text);
         }
@@ -81,6 +83,27 @@ export default function App() {
     });
     return uniqueWords.join(' ');
   };
+
+  const generateAndDisplayDomainGuide = async (domain: string) => {
+    addMessage(ChatSender.BOT, `Awesome! I'm putting together a detailed guide and a personalized roadmap for **${domain}**. One moment...`);
+    setIsLoading(true);
+
+    try {
+      const details = await geminiService.getDomainDetails(domain);
+      addMessage(ChatSender.BOT, details);
+      
+      const roadmapSteps = await geminiService.getDomainRoadmap(domain);
+      addMessage(ChatSender.BOT, '', undefined, undefined, roadmapSteps);
+      
+      promptForFinalFeedback(domain);
+    } catch (error) {
+      console.error("Error generating domain guide:", error);
+      addMessage(ChatSender.BOT, "Sorry, I had trouble generating the guide for that domain. Please try another one.");
+      setChatState(ChatState.AWAITING_INTERESTED_DOMAIN);
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   const handleUserMessage = async (rawText: string) => {
     if (isLoading) return;
@@ -126,30 +149,39 @@ export default function App() {
         }
         
         case ChatState.AWAITING_STREAM: {
-            setStream(text);
-            const botReply = `Got it, ${text} stream. Now, can you tell me what domain was predicted for you by our website?`;
-            addMessage(ChatSender.BOT, botReply);
-            setChatState(ChatState.AWAITING_PREDICTED_DOMAIN);
+            const validation = await geminiService.validateStream(text);
+            if (validation.isValid && validation.streamName) {
+                setStream(validation.streamName);
+                const botReply = `Got it, ${validation.streamName} stream. Now, can you tell me what domain was predicted for you by our website?`;
+                addMessage(ChatSender.BOT, botReply);
+                setChatState(ChatState.AWAITING_PREDICTED_DOMAIN);
+            } else {
+                const botReply = "That doesn't seem like a valid academic stream. Please tell me your stream, such as Science, Commerce, or Arts.";
+                addMessage(ChatSender.BOT, botReply);
+            }
             break;
         }
 
         case ChatState.AWAITING_PREDICTED_DOMAIN: {
-          const predictedDomain = await geminiService.extractDomainFromText(text);
-          setQuizSession({ predictedDomain, userAnswers: [] });
-          const botReply = `So your predicted domain is **${predictedDomain}**. Are you satisfied with this domain, or would you like to explore other options? (Reply ‘Satisfied’ or ‘Not satisfied’.)`;
-          addMessage(ChatSender.BOT, botReply);
-          setChatState(ChatState.AWAITING_SATISFACTION);
+          const validation = await geminiService.validateDomain(text);
+          if (validation.isValid && validation.domainName) {
+              const predictedDomain = validation.domainName;
+              setQuizSession({ predictedDomain, userAnswers: [] });
+              const botReply = `So your predicted domain is **${predictedDomain}**. Are you satisfied with this domain, or would you like to explore other options? (Reply ‘Satisfied’ or ‘Not satisfied’.)`;
+              addMessage(ChatSender.BOT, botReply);
+              setChatState(ChatState.AWAITING_SATISFACTION);
+          } else {
+              const botReply = "That doesn't seem to be a valid career domain. Please tell me the domain that was predicted for you by our website (e.g., Data Science, Design, Accounting).";
+              addMessage(ChatSender.BOT, botReply);
+          }
           break;
         }
 
         case ChatState.AWAITING_SATISFACTION: {
           const lowerCaseText = text.toLowerCase();
           if (lowerCaseText.includes('satisfied') && !lowerCaseText.includes('not')) {
-            setChatState(ChatState.GENERATING_DETAILS);
             const domain = quizSession!.predictedDomain!;
-            const details = await geminiService.getDomainDetailsAndRoadmap(domain);
-            addMessage(ChatSender.BOT, details);
-            promptForFinalFeedback(domain);
+            await generateAndDisplayDomainGuide(domain);
           } else {
             const botReply = 'No problem! Which domains interest you most? You can name 1–2 (e.g., Data Science, Design, Accounting).';
             addMessage(ChatSender.BOT, botReply);
@@ -159,24 +191,32 @@ export default function App() {
         }
 
         case ChatState.AWAITING_INTERESTED_DOMAIN: {
-          const interestedDomain = await geminiService.extractDomainFromText(text);
-          setQuizSession(prev => ({ ...prev!, interestedDomain }));
-          const botReply = `Great! Let's explore **${interestedDomain}**. I'll ask you 5 short multiple-choice questions to see if it's a good fit. Ready?`;
-          addMessage(ChatSender.BOT, botReply);
-          setChatState(ChatState.GENERATING_QUIZ);
-          const questions = await geminiService.getQuizQuestions(interestedDomain);
-          setQuizSession(prev => ({ ...prev!, questions }));
-          setChatState(ChatState.IN_QUIZ);
-          presentQuestion(questions, 0);
+          const validation = await geminiService.validateDomain(text);
+          if (validation.isValid && validation.domainName) {
+            const interestedDomain = validation.domainName;
+            setQuizSession(prev => ({ ...prev!, interestedDomain }));
+            const botReply = `Great! Let's explore **${interestedDomain}**. I'll ask you 5 short multiple-choice questions to see if it's a good fit. Ready?`;
+            addMessage(ChatSender.BOT, botReply);
+            setChatState(ChatState.GENERATING_QUIZ);
+            const questions = await geminiService.getQuizQuestions(interestedDomain);
+            setQuizSession(prev => ({ ...prev!, questions }));
+            setChatState(ChatState.IN_QUIZ);
+            presentQuestion(questions, 0);
+          } else {
+            const botReply = "That doesn't seem to be a valid career domain. Please name 1-2 domains you're interested in (e.g., Data Science, Design, Accounting).";
+            addMessage(ChatSender.BOT, botReply);
+          }
           break;
         }
         
         case ChatState.AWAITING_ADJACENT_CHOICE: {
-            const chosenDomain = await geminiService.extractDomainFromText(text);
-            setChatState(ChatState.GENERATING_DETAILS);
-            const details = await geminiService.getDomainDetailsAndRoadmap(chosenDomain);
-            addMessage(ChatSender.BOT, details);
-            promptForFinalFeedback(chosenDomain);
+            const validation = await geminiService.validateDomain(text);
+            if (validation.isValid && validation.domainName) {
+                await generateAndDisplayDomainGuide(validation.domainName);
+            } else {
+                const botReply = "Please choose one of the suggested domains, or name another one you're interested in.";
+                addMessage(ChatSender.BOT, botReply);
+            }
             break;
         }
         
@@ -279,11 +319,8 @@ export default function App() {
         addMessage(ChatSender.BOT, '', undefined, analysisResult.data);
 
         if (analysisResult.isGoodFit) {
-          setChatState(ChatState.GENERATING_DETAILS);
           const domain = newQuizSession.interestedDomain!;
-          const details = await geminiService.getDomainDetailsAndRoadmap(domain);
-          addMessage(ChatSender.BOT, details);
-          promptForFinalFeedback(domain);
+          await generateAndDisplayDomainGuide(domain);
         } else {
           // The 'nextSteps' text is already in the analysis data, so we just wait for user input
           setChatState(ChatState.AWAITING_ADJACENT_CHOICE);

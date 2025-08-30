@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Chat } from "@google/genai";
-import { QuizQuestion, QuizSession, QuizAnalysisData } from "../types";
+import { QuizQuestion, QuizSession, QuizAnalysisData, RoadmapStep } from "../types";
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable is not set");
@@ -39,36 +39,107 @@ export const extractNameFromText = async (text: string): Promise<string> => {
     return response.text.trim();
 };
 
-const domainExtractionSystemInstruction = `You are an expert system that extracts a career domain from a given text.
-- ONLY return the career domain name.
-- The domain should be concise and standardized (e.g., "Data Science", "Mechanical Engineering", "Psychology").
-- If no clear domain is found, return the original text.
-- Do not add any explanation or pleasantries. Just the domain name.
+const streamValidationSystemInstruction = `You are an expert system that validates academic streams for a Class 12 student in India.
+- Your task is to determine if the user's input is a valid academic stream (e.g., Science, Commerce, Arts, Humanities, PCM, PCB, PCMB).
+- If it is a valid stream, respond with a JSON object where "isValid" is true and "streamName" is the standardized stream name. For example, if the input is "sci", the standardized name should be "Science".
+- If it is NOT a valid academic stream (e.g., a question like "Who is Virat Kohli?", a random statement, or "I don't know"), respond with a JSON object where "isValid" is false and "streamName" is an empty string.
+- Do not add any explanation or pleasantries. Just the JSON object.
 
 Examples:
-- Input: "it's predicted me for science" -> Output: "Science"
-- Input: "The website said Data Science for me." -> Output: "Data Science"
-- Input: "design" -> Output: "Design"
-- Input: "I am interested in becoming a doctor" -> Output: "Medicine"
-- Input: "I'm not sure" -> Output: "I'm not sure"
+- Input: "science" -> Output: {"isValid": true, "streamName": "Science"}
+- Input: "I am in commerce" -> Output: {"isValid": true, "streamName": "Commerce"}
+- Input: "arts" -> Output: {"isValid": true, "streamName": "Arts"}
+- Input: "Who is Virat Kohli?" -> Output: {"isValid": false, "streamName": ""}
+- Input: "i don't know" -> Output: {"isValid": false, "streamName": ""}
 `;
 
-export const extractDomainFromText = async (text: string): Promise<string> => {
-    // Optimization: If the text is short, assume it's just the domain.
-    if (text.trim().split(' ').length <= 3) {
-        return text.trim();
-    }
-    
+const streamValidationSchema = {
+    type: Type.OBJECT,
+    properties: {
+        isValid: { type: Type.BOOLEAN, description: "Whether the input is a valid academic stream." },
+        streamName: { type: Type.STRING, description: "The standardized stream name if valid, otherwise an empty string." }
+    },
+    required: ["isValid", "streamName"]
+};
+
+export const validateStream = async (text: string): Promise<{ isValid: boolean; streamName: string | null; }> => {
     const response = await ai.models.generateContent({
         model,
-        contents: `Extract the career domain from this text: "${text}"`,
+        contents: `Validate this stream: "${text}"`,
         config: {
-            systemInstruction: domainExtractionSystemInstruction,
-            thinkingConfig: { thinkingBudget: 0 }, 
+            systemInstruction: streamValidationSystemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: streamValidationSchema,
+            thinkingConfig: { thinkingBudget: 0 },
         },
     });
 
-    return response.text.trim();
+    try {
+        const jsonText = response.text.trim();
+        const result = JSON.parse(jsonText);
+        
+        if (typeof result.isValid === 'boolean') {
+            return { 
+                isValid: result.isValid, 
+                streamName: result.isValid && result.streamName ? result.streamName : null 
+            };
+        }
+        throw new Error("Validation response does not match the required format.");
+    } catch (e) {
+        console.error("Failed to parse stream validation JSON:", e);
+        return { isValid: false, streamName: null };
+    }
+};
+
+const domainValidationSystemInstruction = `You are an expert system that validates career or academic domains.
+- Your task is to determine if the user's input is a plausible career domain (e.g., "Data Science", "Mechanical Engineering", "Psychology", "Design").
+- If it is a valid domain, respond with a JSON object where "isValid" is true and "domainName" is the standardized domain name. For example, if the input is "data scientist", the standardized name should be "Data Science".
+- If it is NOT a valid domain (e.g., a question like "Who is Modi?", a random statement, or "I don't know"), respond with a JSON object where "isValid" is false and "domainName" is an empty string.
+- Do not add any explanation or pleasantries. Just the JSON object.
+
+Examples:
+- Input: "The website said Data Science for me." -> Output: {"isValid": true, "domainName": "Data Science"}
+- Input: "design" -> Output: {"isValid": true, "domainName": "Design"}
+- Input: "Who is Modi?" -> Output: {"isValid": false, "domainName": ""}
+- Input: "i'm not sure" -> Output: {"isValid": false, "domainName": ""}
+`;
+
+const domainValidationSchema = {
+    type: Type.OBJECT,
+    properties: {
+        isValid: { type: Type.BOOLEAN, description: "Whether the input is a valid career/academic domain." },
+        domainName: { type: Type.STRING, description: "The standardized domain name if valid, otherwise an empty string." }
+    },
+    required: ["isValid", "domainName"]
+};
+
+export const validateDomain = async (text: string): Promise<{ isValid: boolean; domainName: string | null; }> => {
+    const response = await ai.models.generateContent({
+        model,
+        contents: `Validate this domain: "${text}"`,
+        config: {
+            systemInstruction: domainValidationSystemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: domainValidationSchema,
+            thinkingConfig: { thinkingBudget: 0 },
+        },
+    });
+
+    try {
+        const jsonText = response.text.trim();
+        const result = JSON.parse(jsonText);
+        
+        if (typeof result.isValid === 'boolean') {
+            return { 
+                isValid: result.isValid, 
+                domainName: result.isValid && result.domainName ? result.domainName : null 
+            };
+        }
+        throw new Error("Validation response does not match the required format.");
+    } catch (e) {
+        console.error("Failed to parse domain validation JSON:", e);
+        return { isValid: false, domainName: null };
+    }
 };
 
 
@@ -266,34 +337,77 @@ The entire response must be formatted in Markdown. Follow these section headers 
 *Briefly describe the future career growth prospects and name 2-3 related career fields they could pivot to later.*
 
 ---
+`;
 
-### Your 12-Month Roadmap
-*This section should be a clear, step-by-step plan.*
-
-#### **Next 1–3 months:**
-*Outline beginner-friendly learning goals and suggest one tiny, achievable project.*
-
-#### **Next 6 months:**
-*Describe intermediate concepts to tackle and propose a slightly more complex capstone project.*
-
-#### **Next 12 months:**
-*Set a goal for real-world exposure, such as applying for an internship, participating in a competition, or freelancing.*
-
-#### **Skills to practice weekly:**
-*List 2-3 fundamental skills (e.g., logic puzzles, writing, a specific software) to practice consistently.*
-
-#### **Resources:**
-*Suggest 3-5 TYPES of resources, not just specific links. For example: "Online courses (Coursera, Udemy)", "Interactive coding platforms (freeCodeCamp)", "Professional communities (LinkedIn groups, Discord servers)".*`;
-
-export const getDomainDetailsAndRoadmap = async (domain: string): Promise<string> => {
+export const getDomainDetails = async (domain: string): Promise<string> => {
     const response = await ai.models.generateContent({
         model,
-        contents: `Generate the domain details and roadmap for: ${domain}`,
+        contents: `Generate the domain details for: ${domain}`,
         config: {
             systemInstruction: domainDetailsSystemInstruction,
         },
     });
     return response.text;
+};
+
+const roadmapGenerationSystemInstruction = `You are a supportive, motivating Career Guidance Teacher Chatbot.
+Your task is to generate a personalized and inspiring 12-month roadmap for a student about their chosen career domain.
+The roadmap should be broken down into three clear, actionable stages.
+
+**CORE DIRECTIVES:**
+1.  **Generate EXACTLY 3 Stages:** The roadmap must consist of three distinct stages.
+2.  **Stage Content:** Each stage must contain:
+    -   \`title\`: A short, inspiring title (e.g., "Phase 1: Building the Foundation").
+    -   \`duration\`: The time frame for this stage (e.g., "Months 1-3").
+    -   \`goals\`: A list of 2-3 specific, beginner-friendly learning goals.
+    -   \`project\`: A description of one simple, achievable project for this stage.
+    -   \`skillsToPractice\`: A list of 2-3 fundamental skills to practice consistently.
+3.  **Tone:** The language should be encouraging, clear, and highly actionable.
+4.  **Output Format:** Strictly adhere to the requested JSON schema. The entire output must be a valid JSON array of stage objects. Do not include any text, pleasantries, or markdown formatting outside of the JSON array.`;
+
+const roadmapSchema = {
+    type: Type.ARRAY,
+    items: {
+        type: Type.OBJECT,
+        properties: {
+            title: { type: Type.STRING },
+            duration: { type: Type.STRING },
+            goals: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING }
+            },
+            project: { type: Type.STRING },
+            skillsToPractice: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING }
+            }
+        },
+        required: ["title", "duration", "goals", "project", "skillsToPractice"]
+    }
+};
+
+export const getDomainRoadmap = async (domain: string): Promise<RoadmapStep[]> => {
+    const response = await ai.models.generateContent({
+        model: model,
+        contents: `Generate a 3-stage, 12-month roadmap for the domain: ${domain}`,
+        config: {
+            systemInstruction: roadmapGenerationSystemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: roadmapSchema,
+        },
+    });
+
+    const jsonText = response.text.trim();
+    try {
+        const roadmap = JSON.parse(jsonText);
+        if (Array.isArray(roadmap) && roadmap.length > 0) {
+            return roadmap;
+        }
+        throw new Error("Generated roadmap does not match the required format.");
+    } catch (e) {
+        console.error("Failed to parse roadmap JSON:", e);
+        throw new Error("Could not generate a valid roadmap. Please try again.");
+    }
 };
 
 const feedbackSystemInstruction = `You are an AI that determines if a user's feedback is positive or negative in the context of career guidance.
@@ -333,7 +447,8 @@ You have already provided the student with a detailed analysis and roadmap for a
 Your current role is to answer any follow-up questions they may have.
 - Be encouraging and helpful.
 - Keep answers concise and relevant to career guidance.
-- If asked about something outside your scope, gently guide the conversation back to careers.
+- If asked about something outside your scope (i.e., not related to studies or careers), gently tell the user to check their question again and ask something related to studies. For example: "My purpose is to assist with career guidance. Kindly check your question and ask me something related to your studies or future career."
+- If the user uses inappropriate language like "sex", respond firmly with "Kindly mind your language." and do not answer the question.
 - Maintain your persona as a friendly guidance teacher.`;
 
 export const startFollowUpChat = (): Chat => {

@@ -3,6 +3,14 @@ export enum ChatSender {
   BOT = 'bot',
 }
 
+export interface RoadmapStep {
+  title: string;
+  duration: string;
+  goals: string[];
+  project: string;
+  skillsToPractice: string[];
+}
+
 export interface ChatMessageData {
   sender: ChatSender;
   text: string;
@@ -10,6 +18,7 @@ export interface ChatMessageData {
   quizAnswered?: boolean;
   selectedOption?: number;
   analysis?: QuizAnalysisData;
+  roadmap?: RoadmapStep[];
 }
 
 export enum ChatState {
